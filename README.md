@@ -1,9 +1,11 @@
 # Remote Kernel
-Remote kernel is a pure-python package that utilizes `paramiko`
-and `sshtunnel` to set up an ssh connection with port forwarding 
-to a remote host, and start up an IPyKernel on that host.
-This allows a locally running instance of Jupyter or Spyder to easily
-run code on a remote server.
+Remote kernel is a pure-python package that sets up an ssh 
+connection with port forwarding to a remote host, and starts
+up an IPyKernel on that host. This allows a locally running 
+instance of Jupyter or Spyder to easily run code on a remote 
+server. Moreover, this can be installed as a jupyter 'kernel',
+allowing you to use this just as easily as you would use a 
+local kernel!
 
 ## Installation
 
@@ -55,3 +57,12 @@ the `<user>@<host>` part, even though it's not a number.*
 
 *N.B. By default, remote_kernel starts regular ipykernels on the remote
 server, but this can be overridden using the `-c` command line option.*
+
+## Acknowledgements/Requirements
+
+This package relies heaviliy on the following packages
+
+- [paramiko](https://github.com/paramiko/paramiko), 
+  for setting up the ssh connection.
+- [sshtunnel](https://github.com/pahaz/sshtunnel), 
+  for creating the forwarding tunnels for the kernel ports.
