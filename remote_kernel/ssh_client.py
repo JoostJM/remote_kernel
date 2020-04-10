@@ -1,13 +1,15 @@
+import logging
 import os
 import re
 
 import paramiko
 from sshtunnel import SSHTunnelForwarder
 
+logger = logging.getLogger('remote_kernel.ssh_client')
 try:
   from . import dialog
 except ImportError as e:
-  print('Could not import GUI module!\n\t' + str(e))
+  logger.warning('Could not import GUI module!\n\t' + str(e))
   dialog = None
 
 

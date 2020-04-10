@@ -16,3 +16,8 @@ kernel_name           --
 transport             --transport  ['tcp', 'icp']
 """
 
+import logging
+logging.basicConfig()
+logging.getLogger().setLevel(logging.INFO)
+for hndlr in logging.getLogger().handlers:
+  hndlr.setLevel(logging.INFO)
