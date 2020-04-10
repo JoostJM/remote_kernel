@@ -21,3 +21,8 @@ logging.basicConfig()
 logging.getLogger().setLevel(logging.INFO)
 for hndlr in logging.getLogger().handlers:
   hndlr.setLevel(logging.INFO)
+
+def get_resource_dir():
+  import os
+  resource_dir = os.path.join(os.path.dirname(__file__), 'resources')
+  return os.path.abspath(resource_dir)

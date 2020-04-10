@@ -14,6 +14,7 @@ setup(
   version='0.1.dev',
 
   packages=['remote_kernel'],
+  package_data={'remote_kernel': ['resources/*.png']},
   zip_safe=False,
 
   description='Python Script to connect to remote IPyKernel via ssh',
