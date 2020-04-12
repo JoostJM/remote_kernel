@@ -1,19 +1,3 @@
-
-"""
-Connection config:
-
-Key                   Cmd Arg
-ip                    --ip
-stdin_port            --stdin
-shell_port            --shell
-iopub_port            --iopub
-hb_port               --hb
-control_port          --control
-signature_scheme      --Session.signature_scheme    must have the form hmac-HASH
-key                   --Session.key                 b''
-kernel_name           --
-transport             --transport  ['tcp', 'icp']
-"""
 import argparse
 import json
 import logging
@@ -23,22 +7,9 @@ import time
 import paramiko
 from jupyter_core.paths import jupyter_runtime_dir
 
+from . import CMD_ARGS
 from .ssh_client import ParamikoClient
 
-# argument template for starting up an IPyKernel without supplying a connection file
-# arguments to fill this template are read from the connection file which remains on
-# the local computer. It only ignores the kernel_name argument from the connection file.
-CMD_ARGS = ' '.join([
-  '--ip="%(ip)s"',
-  '--stdin=%(stdin_port)i',
-  '--shell=%(shell_port)i',
-  '--iopub=%(iopub_port)i',
-  '--hb=%(hb_port)i',
-  '--control=%(control_port)i',
-  '--Session.signature_scheme="%(signature_scheme)s"',
-  '--Session.key="b\'%(key)s\'"',  # Py3 compat: ensure the key is interpreted as a byte string
-  '--transport="%(transport)s"'
-])
 
 logger = logging.getLogger('remote_kernel.start')
 
@@ -72,20 +43,70 @@ def generate_config():
   )
 
 
+def get_spec(argv=None):
+  global logger
+  from jupyter_core.paths import jupyter_path
+
+  spec_parser = argparse.ArgumentParser()
+  spec_parser.add_argument('kernel_name', help='Name of jupyter registered kernel to start (folder name)')
+  spec_args = spec_parser.parse_args(argv)
+
+  kernel_name = spec_args.kernel_name
+
+  if os.path.isabs(kernel_name):
+    kernel_spec = kernel_name
+  else:
+    kernel_spec = None
+    for d in ['.'] + jupyter_path('kernels'):
+      logger.debug('Searching in directory %s', d)
+      if os.path.isfile(os.path.join(d, kernel_name, 'kernel.json')):
+        kernel_spec = os.path.join(d, kernel_name, 'kernel.json')
+        break
+
+    assert kernel_spec is not None, \
+        'Kernel specification file %s not found!' % kernel_name
+
+  logger.info('Loading kernel specification file %s', kernel_spec)
+
+  with open(kernel_spec, mode='r') as spec_fs:
+    spec = json.load(spec_fs)
+
+  args = spec['argv']
+
+  assert args[1:3] == ['-m', 'remote_kernel'], \
+      'Kernel spec %s is not a remote_kernel specification' % kernel_spec
+
+  # Remove the jupyter supplied connection_file specification
+  if '-f' in args and args[args.index('-f') + 1] == '{connection_file}':
+    idx = args.index('-f')
+    del args[idx: idx+2]
+  elif '-f={connection_file}' in args:
+    del args[args.index('-f={connection_file}')]
+
+  return parse_args(args[3:])
+
+
 def parse_args(argv=None):
   global logger
-  parser = argparse.ArgumentParser()
-  parser.add_argument('ssh_host', metavar='[username@]host[:port]',
+
+  parser = argparse.ArgumentParser(fromfile_prefix_chars='@')
+  parser.add_argument('--target', '-t', metavar='[username@]host[:port]',
                       help='Remote server to connect to. Formatted as [username@]host[:port]')
-  parser.add_argument('-J', dest='jump_server', metavar='[username@]host[:port]', default=[], action='append')
-  parser.add_argument('-i', dest='ssh_key', default=None)
-  parser.add_argument('--command', '-c', default='python -m ipykernel')
-  parser.add_argument('--file', '-f')
+  parser.add_argument('-J', dest='jump_server', metavar='[username@]host[:port]', default=[], action='append',
+                      help='Optional jump servers to connect through to the host')
+  parser.add_argument('-i', dest='ssh_key', default=None, help='ssh key to use for authentication')
+  parser.add_argument('--command', '-c', default='python -m ipykernel',
+                      help='Command to execute on the remote server (should start the kernel)')
+  parser.add_argument('--file', '-f', help='Connection file to configure the kernel')
 
   logger.debug('parsing arguments')
   args = parser.parse_args(argv)
+  arg_dict = args.__dict__.copy()
 
-  if args.file is not None:
+  target = arg_dict.pop('target')
+
+  connection_file = arg_dict.pop('file')
+  if connection_file is not None:
     logger.debug('reading kernel config file %s', args.file)
     with open(args.file, mode='r') as file_fs:
       conn_config = json.load(file_fs)
@@ -93,13 +114,17 @@ def parse_args(argv=None):
     logger.debug('Generating new kernel config')
     conn_config = generate_config()
 
-  return start_kernel(args.ssh_host, conn_config, args.ssh_key, args.jump_server, args.command)
+  return start_kernel(target, conn_config, **arg_dict)
 
 
-def start_kernel(ssh_host, connection_config, ssh_key=None, jump_server=None, command=None):
-    global CMD_ARGS, logger
+def start_kernel(ssh_host, connection_config, **kwargs):
+    global logger
 
-    arguments = CMD_ARGS % connection_config
+    ssh_key = kwargs.get('ssh_key', None)
+    jump_server = kwargs.get('jump_server', None)
+    command = kwargs.get('command', 'python -m ipykernel')
+
+    arguments = ' '.join(['%s=%s' % (key, value) for key, value in CMD_ARGS.items()]) % connection_config
     ssh_cmd = '%s %s' % (command, arguments)
 
     fwd_ports = [('localhost', connection_config[port]) for port in connection_config if port.endswith('_port')]
@@ -143,7 +168,7 @@ def start_kernel(ssh_host, connection_config, ssh_key=None, jump_server=None, co
           if not data:
             logger.info("\r\n*** SSH Channel Closed ***\r\n\r\n")
             break
-          logger.debug("REMOTE >>> " + data.decode('utf-8').replace('\n', '\nREMOTE >>> '))
+          logger.info("REMOTE >>> " + data.decode('utf-8').replace('\n', '\nREMOTE >>> '))
       except (KeyboardInterrupt, SystemExit):
         logging.info("Cancelled!")
       return 0
@@ -151,14 +176,12 @@ def start_kernel(ssh_host, connection_config, ssh_key=None, jump_server=None, co
       logger.error('Main loop error', exc_info=True)
       return 1
     finally:
-      try:
-        if tunnel is not None:
-          tunnel.close()
-        clients.reverse()
-        for client in clients:
-          client.close()
-      except KeyboardInterrupt:  # When users keep hammering that CTRL-C
-        pass
-      finally:
-        if kernel_fname is not None and os.path.exists(kernel_fname):
-          os.remove(kernel_fname)
+      if kernel_fname is not None and os.path.exists(kernel_fname):
+        os.remove(kernel_fname)
+
+      # Clean up SSH connection
+      if tunnel is not None:
+        tunnel.close()
+      clients.reverse()
+      for client in clients:
+        client.close()

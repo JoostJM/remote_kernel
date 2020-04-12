@@ -8,7 +8,7 @@ import sys
 from jupyter_core.paths import jupyter_data_dir
 import paramiko
 
-from . import get_resource_dir
+from . import CMD_ARGS, get_resource_dir
 from .ssh_client import ParamikoClient
 
 
@@ -17,23 +17,39 @@ logger = logging.getLogger('remote_kernel.install')
 
 def parse_args(argv=None):
   parser = argparse.ArgumentParser()
-  parser.add_argument('ssh_host', metavar='[username@]host[:port]',
+  parser.add_argument('--target', '-t', metavar='[username@]host[:port]',
                       help='Remote server to connect to. Formatted as [username@]host[:port]')
   parser.add_argument('-J', dest='jump_server', metavar='[username@]host[:port]', default=None, action='append',
                       help='Optional jump servers to connect through to the host')
   parser.add_argument('-i', dest='ssh_key', default=None, help='ssh key to use for authentication')
+  parser.add_argument('--kernel', '-k', default='python -m ipykernel',
+                      help='Kernel start command, default is "ipykernel"')
   parser.add_argument('--command', '-c', default=None,
                       help='Additional commands to execute on remote server, prior to '
-                           'starting the kernel (`python -m ipykernel -f {connection_file}`)')
+                           'starting the kernel (specified in `--kernel`)')
   parser.add_argument('--name', '-n', default='remote_kernel-%(user)s@%(host)s',
                       help='Display name of the kernel to install')
+  parser.add_argument('--dry-run', action='store_true',
+                      help='If specified, test settings without writing kernel specs.')
 
   args = parser.parse_args(argv)
-  return install_kernel(args.name, args.ssh_host, args.ssh_key, args.jump_server, args.command)
+
+  arg_dict = args.__dict__.copy()
+  kernel_name = arg_dict.pop('name')
+  ssh_host = arg_dict.pop('target')
+
+  return install_kernel(kernel_name, ssh_host, **arg_dict)
 
 
-def install_kernel(kernel_name, ssh_host, ssh_key=None, jump_server=None, pre_command=None):
+def install_kernel(kernel_name, ssh_host, **kwargs):
   global logger
+
+  ssh_key = kwargs.get('ssh_key', None)
+  jump_server = kwargs.get('jump_server', None)
+
+  pre_command = kwargs.get('command', None)
+  kernel_cmd = kwargs.get('kernel', 'python -m ipykernel')
+  dry_run = kwargs.get('dry_run', False)
 
   clients = []
   try:
@@ -54,7 +70,7 @@ def install_kernel(kernel_name, ssh_host, ssh_key=None, jump_server=None, pre_co
 
     chan = ssh_client.get_transport().open_session()
     chan.get_pty()
-    cmd = 'python -c "import ipykernel"'
+    cmd = '%s --help-all' % kernel_cmd
     if pre_command is not None:
       cmd = '%s && %s' % (pre_command, cmd)
 
@@ -62,23 +78,36 @@ def install_kernel(kernel_name, ssh_host, ssh_key=None, jump_server=None, pre_co
     chan.exec_command(cmd)
     result = chan.recv_exit_status()
 
-    if result != 0:
-      logger.error('CMD %s returned a non-zero exit status on remote server.', cmd)
+    output = ''
+    data = chan.recv(4096)
+    while data:
+      output += data.decode('utf-8')
+      logger.debug("REMOTE >>> " + data.decode('utf-8'))
       data = chan.recv(4096)
-      while data:
-        logger.info("REMOTE >>> " + data.decode('utf-8'))
-        data = chan.recv(4096)
+
+    if result != 0:
+      logger.error('CMD %s returned a non-zero exit status on remote server.\n\n%s', cmd, output)
       return 1
+    else:
+      for cmd in CMD_ARGS.keys():
+        if '\n' + cmd not in output:
+          logger.error('Help message does not specify required argument %s', cmd)
+          return 1
+
+    if dry_run:
+      logger.info('Test passed, returning without writing kernel specs.')
+      return 0
 
     logger.info('Command successful, writing kernel_spec file')
-
     name_spec = dict(
       user=ssh_client.username,
       host=ssh_client.host,
       port=ssh_client.port
     )
     kernel_name = kernel_name % name_spec
-    kernel_dir = os.path.join(jupyter_data_dir(), 'kernels', kernel_name)
+    safe_name = ''.join(c if c.isalnum() or c in ('.', '-', '_') else '-' for c in kernel_name).rstrip()
+
+    kernel_dir = os.path.join(jupyter_data_dir(), 'kernels', safe_name)
 
     if os.path.isdir(kernel_dir):
       logger.error('Kernel directory %s already exists. Choose another name or delete the directory', kernel_dir)
@@ -99,7 +128,6 @@ def install_kernel(kernel_name, ssh_host, ssh_key=None, jump_server=None, pre_co
       kernel_args += ['-c', '%s && python -m ipykernel' % pre_command]
     kernel_args += ['-f', '{connection_file}']
 
-
     kernel_spec = dict(
       argv=kernel_args,
       language='python',
@@ -115,11 +143,8 @@ def install_kernel(kernel_name, ssh_host, ssh_key=None, jump_server=None, pre_co
       shutil.copy(os.path.join(resource_dir, fname), os.path.join(kernel_dir, fname))
 
     logger.info('Kernel specification installed in %s', kernel_dir)
-
     return 0
-  except Exception as e:
-    logger.error('Kernel installation error', exc_info=True)
-    return 1
+
   finally:
     clients.reverse()
     for client in clients:

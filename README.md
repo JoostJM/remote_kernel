@@ -37,6 +37,15 @@ To start the remote kernel:
 
 `python -m remote_kernel <ssh_host> [Options]`
 
+Or, to start the remote kernel from a kernel spec file:
+
+`python -m remote_kernel from-spec <kernel-name>`
+
+Here, `<kernel-name>` is the name of directory containing the
+`kernel.json` kernel spec file. If the name is relative, remote_kernel
+looks for it relative to the current directory, as well as in the jupyter
+kernel directories.
+
 Again, options can be listed using:
 
 `python -m remote_kernel <ssh_host> [Options]`
