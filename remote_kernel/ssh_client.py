@@ -91,9 +91,14 @@ class ParamikoClient(paramiko.SSHClient):
     # This is done to make sure the initialization does not fail (does type checking on the connection args)
     # Instead, we manually set the transport we get from the existing connection.
     # This prevents the tunnel from trying to open up a new connection
+
+    # Suppress log output from sshtunnel
+    ssh_logger = logging.getLogger('ssh_tunnel')
+    ssh_logger.addHandler(logging.NullHandler())
     tunnel = SSHTunnelForwarder((self.host, self.port),
                                 ssh_username=self.username, ssh_password='dummy',
                                 local_bind_addresses=local_bind_addresses,
-                                remote_bind_addresses=remote_bind_addresses)
+                                remote_bind_addresses=remote_bind_addresses,
+                                logger = ssh_logger)
     tunnel._transport = self.get_transport()
     return tunnel
