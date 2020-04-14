@@ -28,7 +28,16 @@ def parse_args(argv=None):
                       help='Additional commands to execute on remote server, prior to '
                            'starting the kernel (specified in `--kernel`)')
   parser.add_argument('--name', '-n', default='remote_kernel-%(user)s@%(host)s',
-                      help='Display name of the kernel to install')
+                      help='Display name of the kernel to install\n'
+                           'Default: remote_kernel-<user>@<host>')
+  parser.add_argument('--no-remote-files', action='store_true',
+                      help='If specified, no remote files are created/removed on the remote host.\n'
+                           'Connection arguments are passed via commandline.\n'
+                           'N.B. This is less secure, as these arguments are visible in the processes list!')
+  parser.add_argument('--skip-kernel-test', action='store_true',
+                      help='If specified, the kernel starting command is not tested.\n'
+                           'This can be useful for starting kernels that do not expose\n'
+                           'the --help-all commandline option')
   parser.add_argument('--dry-run', action='store_true',
                       help='If specified, test settings without writing kernel specs.')
 
@@ -50,6 +59,8 @@ def install_kernel(kernel_name, ssh_host, **kwargs):
   pre_command = kwargs.get('command', None)
   kernel_cmd = kwargs.get('kernel', 'python -m ipykernel')
   dry_run = kwargs.get('dry_run', False)
+  skip_kernel_test = kwargs.get('skip_kernel_test', False)
+  no_remote_files = kwargs.get('no_remote_files', False)
 
   clients = []
   try:
@@ -70,9 +81,13 @@ def install_kernel(kernel_name, ssh_host, **kwargs):
 
     chan = ssh_client.get_transport().open_session()
     chan.get_pty()
-    cmd = '%s --help-all' % kernel_cmd
+    cmds = []
     if pre_command is not None:
-      cmd = '%s && %s' % (pre_command, cmd)
+      cmds.append(pre_command)
+    if not skip_kernel_test:
+      cmds.append('%s --help-all' % kernel_cmd)
+
+    cmd = ' && '.join(cmds)
 
     logger.debug('Running cmd %s', cmd)
     chan.exec_command(cmd)
@@ -88,7 +103,7 @@ def install_kernel(kernel_name, ssh_host, **kwargs):
     if result != 0:
       logger.error('CMD %s returned a non-zero exit status on remote server.\n\n%s', cmd, output)
       return 1
-    else:
+    elif not skip_kernel_test:
       for cmd in CMD_ARGS.keys():
         if '\n' + cmd not in output:
           logger.error('Help message does not specify required argument %s', cmd)
@@ -126,6 +141,8 @@ def install_kernel(kernel_name, ssh_host, **kwargs):
       kernel_args += ['-i', ssh_key]
     if pre_command is not None:
       kernel_args += ['-c', '%s && python -m ipykernel' % pre_command]
+    if no_remote_files:
+      kernel_args += ['--no-remote-files']
     kernel_args += ['-f', '{connection_file}']
 
     kernel_spec = dict(

@@ -20,6 +20,7 @@ from collections import OrderedDict
 import logging
 
 logger = logging.getLogger('remote_kernel')
+logger.propagate = False
 hndlr = logging.StreamHandler()
 hndlr.setFormatter(logging.Formatter('%(name)s %(levelname)-.1s: %(message)s'))
 
