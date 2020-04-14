@@ -90,7 +90,7 @@ def parse_args(argv=None):
   global logger
 
   parser = argparse.ArgumentParser(fromfile_prefix_chars='@')
-  parser.add_argument('--target', '-t', metavar='[username@]host[:port]',
+  parser.add_argument('--target', '-t', metavar='[username@]host[:port]', required=True,
                       help='Remote server to connect to. Formatted as [username@]host[:port]')
   parser.add_argument('-J', dest='jump_server', metavar='[username@]host[:port]', default=[], action='append',
                       help='Optional jump servers to connect through to the host')

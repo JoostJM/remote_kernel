@@ -17,7 +17,7 @@ logger = logging.getLogger('remote_kernel.install')
 
 def parse_args(argv=None):
   parser = argparse.ArgumentParser()
-  parser.add_argument('--target', '-t', metavar='[username@]host[:port]',
+  parser.add_argument('--target', '-t', metavar='[username@]host[:port]', required=True,
                       help='Remote server to connect to. Formatted as [username@]host[:port]')
   parser.add_argument('-J', dest='jump_server', metavar='[username@]host[:port]', default=None, action='append',
                       help='Optional jump servers to connect through to the host')
