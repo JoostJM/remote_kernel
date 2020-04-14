@@ -50,8 +50,8 @@ class ParamikoClient(paramiko.SSHClient):
     if self.username is None:
       if dialog is None:
         raise ValueError('username is required, but password dialog does not work!')
-      usr_diag = dialog.PromptDialog('Connecting to %s:%i' % (self.host, self.port), "Username?")
-      self.username = usr_diag.showDialog()
+      self.username = dialog.PromptDialog(prompt='Connecting to\n%s:%i\nUsername:' % (self.host, self.port),
+                                          title="Username?").showDialog()
       assert self.username is not None and self.username != ''
 
     # Set up the authentication variables
@@ -67,14 +67,14 @@ class ParamikoClient(paramiko.SSHClient):
         except paramiko.PasswordRequiredException:
           if dialog is None:
             raise ValueError('Provided key requires password, but password dialog does not work!')
-          pwd_diag = dialog.PwdDialog('Loading SSH Key from %s' % pkey, "RSA Passphrase?")
-          pwd = pwd_diag.showDialog()
+          pwd = dialog.PwdDialog(prompt='Loading SSH Key:\n%s\nRSA passphrase' % pkey,
+                                 title="RSA Passphrase").showDialog()
           self.private_key = paramiko.RSAKey.from_private_key_file(os.path.expanduser(pkey), pwd)
     elif dialog is None:
       raise ValueError('Cannot start client without private key when password dialog does not work.')
     else:
-      pwd_diag = dialog.PwdDialog('Connecting to %s@%s:%i' % (self.username, self.host, self.port))
-      pwd = pwd_diag.showDialog()
+      pwd = dialog.PwdDialog(prompt='Connecting to\n%s@%s:%i\nPassword:' % (self.username, self.host, self.port),
+                             title='Password').showDialog()
 
     jump_channel = None
     if jump_host is not None:
