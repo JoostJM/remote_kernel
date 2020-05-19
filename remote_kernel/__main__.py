@@ -21,7 +21,7 @@ def main(argv=None):
       logger.debug('Starting Start script with args %s', argv)
       return parse_args(argv)
     else:
-      parser = argparse.ArgumentParser()
+      parser = argparse.ArgumentParser(add_help=False)
       parser.add_argument('cmd', choices=['install', 'from-spec'])
       args, remainder = parser.parse_known_args(argv)
 
