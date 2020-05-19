@@ -132,7 +132,7 @@ def install_kernel(kernel_name, ssh_host, **kwargs):
     kernel_args = [
       sys.executable,
       '-m', 'remote_kernel',
-      ssh_host
+      '-t', ssh_host
     ]
     if jump_server is not None:
       for j in jump_server:
