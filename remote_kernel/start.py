@@ -132,81 +132,61 @@ def start_kernel(ssh_host, connection_config, **kwargs):
 
     fwd_ports = [('localhost', connection_config[port]) for port in connection_config if port.endswith('_port')]
 
-    clients = []
-    tunnel = None
     kernel_fname = None
     try:
-      # Connect via jump server(s) if specified
-      if jump_server is not None:
-        for srvr in jump_server:
-          client = ParamikoClient()
-          client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-          client.connect_override(srvr, ssh_key, clients[-1] if len(clients) > 0 else None)
-          clients.append(client)
-      ssh_client = ParamikoClient()
-      ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-      ssh_client.connect_override(ssh_host, ssh_key, clients[-1] if len(clients) > 0 else None)
-      clients.append(ssh_client)
+      with ParamikoClient().connect_override(ssh_host, ssh_key, jump_server) as ssh_client:
+        tunnel = ssh_client.create_forwarding_tunnel(fwd_ports, fwd_ports.copy())
 
-      tunnel = ssh_client.create_forwarding_tunnel(fwd_ports, fwd_ports.copy())
+        if no_remote_files:
+          arguments = ' '.join(['%s=%s' % (key, value) for key, value in CMD_ARGS.items()]) % connection_config
+        else:
+          config_str = json.dumps(connection_config, indent=2)
+          ssh_client.exec_command("echo '%s' > remote_kernel.json" % config_str)
+          arguments = ' -f ~/remote_kernel.json'
 
-      if no_remote_files:
-        arguments = ' '.join(['%s=%s' % (key, value) for key, value in CMD_ARGS.items()]) % connection_config
-      else:
-        config_str = json.dumps(connection_config, indent=2)
-        ssh_client.exec_command("echo '%s' > remote_kernel.json" % config_str)
-        arguments = ' -f ~/remote_kernel.json'
+        ssh_cmd = '%s %s' % (command, arguments)
+        chan = ssh_client.get_transport().open_session()
+        chan.get_pty()
+        logger.debug('Excecuting cmd %s', ssh_cmd)
+        chan.exec_command(ssh_cmd)
 
-      ssh_cmd = '%s %s' % (command, arguments)
-      chan = ssh_client.get_transport().open_session()
-      chan.get_pty()
-      logger.debug('Excecuting cmd %s', ssh_cmd)
-      chan.exec_command(ssh_cmd)
+        try:
+          time.sleep(0.5)  # Wait just a bit to allow the IPyKernel to start up
+          tunnel.start()
 
-      try:
-        time.sleep(0.5)  # Wait just a bit to allow the IPyKernel to start up
-        tunnel.start()
+          kernel_fname = os.path.join(jupyter_runtime_dir(),
+                                      'kernel-%s@%s.json' % (ssh_client.username, ssh_client.host))
+          with open(kernel_fname, mode='w') as kernel_fs:
+            json.dump(connection_config, kernel_fs, indent=2)
 
-        kernel_fname = os.path.join(jupyter_runtime_dir(),
-                                    'kernel-%s@%s.json' % (ssh_client.username, ssh_client.host))
-        with open(kernel_fname, mode='w') as kernel_fs:
-          json.dump(connection_config, kernel_fs, indent=2)
+          logger.info('Remote Kernel started. To connect another client to this kernel, use:\n\t--existing %s' %
+                      os.path.basename(kernel_fname))
 
-        logger.info('Remote Kernel started. To connect another client to this kernel, use:\n\t--existing %s' %
-                    os.path.basename(kernel_fname))
+          def writeall(sock):
+            while True:
+              data = sock.recv(4096)
+              if not data:
+                logger.info("\r\n*** SSH Channel Closed ***\r\n\r\n")
+                break
+              logger.info("REMOTE >>> " + data.decode('utf-8').replace('\n', '\nREMOTE >>> '))
 
-        def writeall(sock):
-          while True:
-            data = sock.recv(4096)
-            if not data:
-              logger.info("\r\n*** SSH Channel Closed ***\r\n\r\n")
-              break
-            logger.info("REMOTE >>> " + data.decode('utf-8').replace('\n', '\nREMOTE >>> '))
+          writer = threading.Thread(target=writeall, args=(chan,))
+          writer.setDaemon(True)
+          writer.start()
 
-        writer = threading.Thread(target=writeall, args=(chan,))
-        writer.setDaemon(True)
-        writer.start()
+          while not chan.exit_status_ready():
+            time.sleep(1)
 
-        while not chan.exit_status_ready():
-          time.sleep(1)
+        except (KeyboardInterrupt, SystemExit):
+          logger.info("Interrupting kernel...")
 
-      except (KeyboardInterrupt, SystemExit):
-        logger.info("Interrupting kernel...")
+        if not no_remote_files:
+          ssh_client.exec_command('rm ~/remote_kernel.json')
 
-      if not no_remote_files:
-        ssh_client.exec_command('rm ~/remote_kernel.json')
-
-      return 0
-    except Exception as e:
+        return 0
+    except Exception:
       logger.error('Main loop error', exc_info=True)
       return 1
     finally:
       if kernel_fname is not None and os.path.exists(kernel_fname):
         os.remove(kernel_fname)
-
-      # Clean up SSH connection
-      if tunnel is not None:
-        tunnel.close()
-      clients.reverse()
-      for client in clients:
-        client.close()
