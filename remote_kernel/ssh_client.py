@@ -99,6 +99,6 @@ class ParamikoClient(paramiko.SSHClient):
                                 ssh_username=self.username, ssh_password='dummy',
                                 local_bind_addresses=local_bind_addresses,
                                 remote_bind_addresses=remote_bind_addresses,
-                                logger = ssh_logger)
+                                logger=ssh_logger)
     tunnel._transport = self.get_transport()
     return tunnel
