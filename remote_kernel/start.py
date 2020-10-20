@@ -5,11 +5,11 @@ import os
 import threading
 import time
 
-import paramiko
 from jupyter_core.paths import jupyter_runtime_dir
 
 from . import CMD_ARGS
 from .ssh_client import ParamikoClient
+from .sync import ParamikoSync
 
 
 logger = logging.getLogger('remote_kernel.start')
@@ -91,18 +91,37 @@ def parse_args(argv=None):
   global logger
 
   parser = argparse.ArgumentParser(fromfile_prefix_chars='@')
-  parser.add_argument('--target', '-t', metavar='[username@]host[:port]', required=True,
-                      help='Remote server to connect to. Formatted as [username@]host[:port]')
-  parser.add_argument('-J', dest='jump_server', metavar='[username@]host[:port]', default=[], action='append',
-                      help='Optional jump servers to connect through to the host')
-  parser.add_argument('-i', dest='ssh_key', default=None, help='ssh key to use for authentication')
-  parser.add_argument('--command', '-c', default='python -m ipykernel',
-                      help='Command to execute on the remote server (should start the kernel)')
-  parser.add_argument('--file', '-f', help='Connection file to configure the kernel')
-  parser.add_argument('--no-remote-files', action='store_true',
-                      help='If specified, no remote files are created/removed on the remote host.\n'
-                           'Connection arguments are passed via commandline.\n'
-                           'N.B. This is less secure, as these arguments are visible in the processes list!')
+  ssh_group = parser.add_argument_group(title='SSH Connection', description="Arguments specifying the SSH connection "
+                                                                            "to the remote server")
+  ssh_group.add_argument('--target', '-t', metavar='[username@]host[:port]', required=True,
+                         help='Remote server to connect to. Formatted as [username@]host[:port]')
+  ssh_group.add_argument('-J', dest='jump_server', metavar='[username@]host[:port]', default=[], action='append',
+                         help='Optional jump servers to connect through to the host')
+  ssh_group.add_argument('-i', dest='ssh_key', default=None, help='ssh key to use for authentication')
+
+  ipykernel_group = parser.add_argument_group(title='IPyKernel Arguments', description="Arguments to start the "
+                                                                                       "ipykernel on the remote server")
+  ipykernel_group.add_argument('--command', '-c', default='python -m ipykernel',
+                               help='Command to execute on the remote server (should start the kernel)')
+  ipykernel_group.add_argument('--file', '-f', help='Connection file to configure the kernel')
+  ipykernel_group.add_argument('--no-remote-files', action='store_true',
+                               help='If specified, no remote files are created/removed on the remote host.\n'
+                                    'Connection arguments are passed via commandline.\n'
+                                    'N.B. This is less secure, as these arguments are visible in the processes list!')
+
+  sync_group = parser.add_argument_group(title='Remote file sync options',
+                                         description='Arguments controlling synchronization of remote files')
+  sync_group.add_argument('--synchronize', '-s', action='store_true', help='If specified, synchronizes files')
+  sync_group.add_argument('--no-recursive', '-nr', action='store_false', dest='recursive',
+                          help='If specified, skips synchronizing files in the sub-folders of the sync folder')
+  sync_group.add_argument('--bi-directional', '-bd', action='store_true',
+                          help='If specified, synchronizes from remote to local and from local to remote')
+  sync_group.add_argument('--remote-folder', '-rf', default='remote_kernel_sync',
+                          help='Remote root folder to sync (containing sub-folders for each unique local folder')
+  sync_group.add_argument('--local-folder', '-lf', default='remote_kernel_sync',
+                          help='Name of local sub-folder to synchronize')
+  sync_group.add_argument('--kernel-name', '-kn', default='N/A',
+                          help='Name of the kernel (used to distinguish local config of different remote kernels)')
 
   logger.debug('parsing arguments')
   args = parser.parse_args(argv)
@@ -144,9 +163,26 @@ def start_kernel(ssh_host, connection_config, **kwargs):
           ssh_client.exec_command("echo '%s' > remote_kernel.json" % config_str)
           arguments = ' -f ~/remote_kernel.json'
 
+        # Setup synchronization if enabled
+        if kwargs.get('synchronize', False):
+          synchronizer = ParamikoSync(ssh_client, **{k: v for k, v in kwargs.items() if k in
+                                                     ('local_folder=', 'remote_folder', 'recursive', 'bi_directional')})
+          synchronizer.set_subfolder(kwargs.get('kernel_name', 'N/A'))
+          try:
+            with synchronizer.connect() as sync:
+              sync.sync()
+          except:
+            logger.error('Error synchronizing files!', exc_info=True)
+        else:
+          synchronizer = None
+
+        # Start IPyKernel
         ssh_cmd = '%s %s' % (command, arguments)
         chan = ssh_client.get_transport().open_session()
         chan.get_pty()
+        if synchronizer is not None:
+          logger.info("Changing dir to %s", synchronizer.remote_folder)
+          ssh_cmd = '%s && %s' % (synchronizer.get_chdir_cmd(), ssh_cmd)
         logger.debug('Excecuting cmd %s', ssh_cmd)
         chan.exec_command(ssh_cmd)
 
@@ -182,6 +218,13 @@ def start_kernel(ssh_host, connection_config, **kwargs):
 
         if not no_remote_files:
           ssh_client.exec_command('rm ~/remote_kernel.json')
+
+        if synchronizer is not None:
+          try:
+            with synchronizer.connect() as sync:
+              sync.sync()
+          except:
+            logger.error('Error synchronizing files!', exc_info=True)
 
         return 0
     except Exception:
