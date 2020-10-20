@@ -15,12 +15,17 @@ class ParamikoSync(object):
 
     self.recursive = recursive
     self.bi_directional = bi_directional
-    self.sftp_server = SFTP.from_transport(ssh_client.get_transport())
+    self.logger.debug('Starting SFTP client')
+    self.sftp_client = SFTP.from_transport(ssh_client.get_transport())
 
     self.local_folder = os.path.abspath(local_folder)
-    self.remote_folder = self.sftp_server.normalize(remote_folder)
+    self.logger.debug('Normalized local path to %s', self.local_folder)
+    self.remote_folder = self.sftp_client.normalize(remote_folder)
+    self.logger.debug('Normalized remote path to %s', self.remote_folder)
 
     self._check_sync_folders()
+
+    self.excluded_files = {}
 
     self._last_sync = 0
 
@@ -31,35 +36,39 @@ class ParamikoSync(object):
     self.close()
 
   def _check_sync_folders(self):
-    if self.sftp_server is None:
+    if self.sftp_client is None:
       self.logger.warning('This ParamikoSync instance has been closed')
       return
 
     if not os.path.isdir(self.local_folder):
+      self.logger.info('Creating local sync directory %s', self.local_folder)
       os.makedirs(self.local_folder)
 
     remote_dirname = os.path.dirname(self.remote_folder)
     remote_basename = os.path.basename(self.remote_folder)
-    remote_dirs = {entry.filename: entry for entry in self.sftp_server.listdir_attr(remote_dirname)}
+    remote_dirs = {entry.filename: entry for entry in self.sftp_client.listdir_attr(remote_dirname)}
 
     # Ensure the folder structure in the sync folder is copied
     if remote_basename not in remote_dirs.keys() or not self._isdir(remote_dirs[remote_basename]):
-      self.sftp_server.mkdir(self.remote_folder)
+      self.logger.info('Creating remote sync directory %s', self.remote_folder)
+      self.sftp_client.mkdir(self.remote_folder)
 
   def get_chdir_cmd(self):
     return 'cd "%s"' % self.remote_folder
 
   def sync(self):
-    if self.sftp_server is None:
+    if self.sftp_client is None:
       self.logger.warning('This ParamikoSync instance has been closed')
       return
 
-    self._sync_remote_folder('.')
+    self._sync_remote_folder()
     if self.bi_directional:
-      self._sync_local_folder('.')
+      self._sync_local_folder()
     self._last_sync = time.time()
 
-  def _sync_local_folder(self, folder):
+  def _sync_local_folder(self, folder='.'):
+    self.logger.debug('Synchronizing local folder %s to remote folder %s',
+                      self._unix_join(self.local_folder, folder), self.remote_folder)
     folder_stack = [folder]
 
     while len(folder_stack) > 0:
@@ -67,7 +76,7 @@ class ParamikoSync(object):
 
       entries = os.listdir(os.path.join(self.local_folder, fldr))
       remote_entries = {entry.filename: entry for entry in
-        self.sftp_server.listdir_attr(self._unix_join(self.remote_folder, fldr))}
+                        self.sftp_client.listdir_attr(self._unix_join(self.remote_folder, fldr))}
 
       for entry in entries:
         entry_path = self._unix_join(fldr, entry)
@@ -77,10 +86,10 @@ class ParamikoSync(object):
           if self.recursive:
             # Ensure the folder structure in the sync folder is copied
             if entry not in remote_entries.keys() or not self._isdir(remote_entries[entry]):
-              self.sftp_server.mkdir(self._unix_join(self.remote_folder, entry_path))
+              self.sftp_client.mkdir(self._unix_join(self.remote_folder, entry_path))
 
             folder_stack.append(entry_path)
-        elif entry_stat.st_mtime < self._last_sync:  # Not changed since last sync, skip
+        elif entry in self.excluded_files or entry_stat.st_mtime < self._last_sync:  # Not changed since last sync, skip
           continue
         else:
           remote_file = remote_entries.get(entry, None)
@@ -90,15 +99,17 @@ class ParamikoSync(object):
 
           if entry_stat.st_mtime > remote_mtime:
             dest_file = self._unix_join(self.remote_folder, entry_path)
-            self.sftp_server.put(os.path.join(self.local_folder, entry_path), dest_file)
-            self.sftp_server.utime(dest_file, (entry_stat.st_atime, entry_stat.st_mtime))
+            self.sftp_client.put(os.path.join(self.local_folder, entry_path), dest_file)
+            self.sftp_client.utime(dest_file, (entry_stat.st_atime, entry_stat.st_mtime))
 
-  def _sync_remote_folder(self, folder):
+  def _sync_remote_folder(self, folder='.'):
+    self.logger.debug('Synchronizing remote folder %s to local folder %s',
+                      self._unix_join(self.remote_folder, folder), self.local_folder)
     folder_stack = [folder]
 
     while len(folder_stack) > 0:
       fldr = folder_stack.pop()
-      entries = self.sftp_server.listdir_attr(self._unix_join(self.remote_folder, fldr))
+      entries = self.sftp_client.listdir_attr(self._unix_join(self.remote_folder, fldr))
 
       for entry in entries:
         entry_path = self._unix_join(fldr, entry.filename)
@@ -120,7 +131,7 @@ class ParamikoSync(object):
               os.makedirs(dest_dir)
 
             # Get the file
-            self.sftp_server.get(self._unix_join(self.remote_folder, entry_path), local_file)
+            self.sftp_client.get(self._unix_join(self.remote_folder, entry_path), local_file)
 
             # Set the local file's modified time to the modified time on the server
             os.utime(local_file, (entry.st_atime, entry.st_mtime))
@@ -134,6 +145,7 @@ class ParamikoSync(object):
     return '/'.join(path_parts)
 
   def close(self):
-    if self.sftp_server:
-      self.sftp_server.close()
-      self.sftp_server = None
+    if self.sftp_client:
+      self.logger.debug('Closing SFTP Client')
+      self.sftp_client.close()
+      self.sftp_client = None
