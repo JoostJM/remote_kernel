@@ -46,13 +46,16 @@ class ParamikoSync(object):
   def __exit__(self, exc_type, exc_val, exc_tb):
     self.close()
 
-  def connect(self):
+  def connect(self, skip_check=False):
     if self.sftp_client is None:
       self.logger.debug('Starting SFTP client')
       self.sftp_client = SFTP.from_transport(self.ssh_client.get_transport())
 
-      if not self._is_folder_checked:
-        self._check_sync_folders()
+      if not self._is_folder_checked and not skip_check:
+        self.check_local_sync_folders()
+        self.check_remote_sync_folder()
+        self._is_folder_checked = True
+
     return self
 
   def close(self):
@@ -61,38 +64,15 @@ class ParamikoSync(object):
       self.sftp_client.close()
       self.sftp_client = None
 
-  def set_subfolder(self, kernel_name):
-    local_config = os.path.join(self.local_folder, '.remote_kernel_sync')
-    if os.path.isfile(local_config):
-      with open(local_config) as conf_fs:
-        config = json.load(conf_fs)
-    else:
-      config = {}
-
-    kernel_config = config.get(kernel_name, None)
-    if kernel_config is None:
-      with self.connect():  # This connection ensures local and remote root folders are created
-        remote_folders = self.get_remote_dirs()
-        i = 1
-        while str(i) in remote_folders:
-          i += 1
-        self.remote_folder = self._unix_join(self.remote_folder, str(i))
-        self.logger.info('Creating synchronization sub-folder %s', self.remote_folder)
-        self.sftp_client.mkdir(self.remote_folder)
-      config[kernel_name] = {'remote_kernel_id': str(i)}
-      with open(local_config, mode='w') as out_fs:
-        json.dump(config, out_fs)
-    else:
-      self.remote_folder = self._unix_join(self.remote_folder, kernel_config['remote_kernel_id'])
-
-  def _check_sync_folders(self):
-    if self.sftp_client is None:
-      self.logger.warning('This ParamikoSync instance has been closed')
-      return
-
+  def check_local_sync_folders(self):
     if not os.path.isdir(self.local_folder):
       self.logger.info('Creating local sync directory %s', self.local_folder)
       os.makedirs(self.local_folder)
+
+  def check_remote_sync_folder(self):
+    if self.sftp_client is None:
+      self.logger.warning('This ParamikoSync instance has been closed')
+      return
 
     self.remote_folder = self.sftp_client.normalize(self.remote_folder)
     self.logger.debug('Normalized remote path to %s', self.remote_folder)
@@ -106,12 +86,34 @@ class ParamikoSync(object):
       self.logger.info('Creating remote sync directory %s', self.remote_folder)
       self.sftp_client.mkdir(self.remote_folder)
 
-    self._is_folder_checked = True
-
   def get_chdir_cmd(self):
     return 'cd "%s"' % self.remote_folder
 
-  def get_remote_dirs(self, folder='.'):
+  def set_subfolder(self, kernel_name):
+    local_config = os.path.join(self.local_folder, '.remote_kernel_sync')
+    if os.path.isfile(local_config):
+      with open(local_config) as conf_fs:
+        config = json.load(conf_fs)
+    else:
+      config = {}
+
+    kernel_config = config.get(kernel_name, None)
+    if kernel_config is None:
+      with self.connect():  # This connection ensures local and remote root folders are created
+        remote_folders = self._get_remote_dirs()
+        i = 1
+        while str(i) in remote_folders:
+          i += 1
+        self.remote_folder = self._unix_join(self.remote_folder, str(i))
+        self.logger.info('Creating synchronization sub-folder %s', self.remote_folder)
+        self.sftp_client.mkdir(self.remote_folder)
+      config[kernel_name] = {'remote_kernel_id': str(i)}
+      with open(local_config, mode='w') as out_fs:
+        json.dump(config, out_fs)
+    else:
+      self.remote_folder = self._unix_join(self.remote_folder, kernel_config['remote_kernel_id'])
+
+  def _get_remote_dirs(self, folder='.'):
     return [
       entry.filename
       for entry in self.sftp_client.listdir_attr(self._unix_join(self.remote_folder, folder))
