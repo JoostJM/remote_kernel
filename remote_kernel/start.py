@@ -72,6 +72,9 @@ def get_spec(argv=None):
   with open(kernel_spec, mode='r') as spec_fs:
     spec = json.load(spec_fs)
 
+  # Ensure specification is the correct version
+  spec = check_spec(kernel_spec, spec)
+
   args = spec['argv']
 
   assert args[1:3] == ['-m', 'remote_kernel'], \
@@ -85,6 +88,62 @@ def get_spec(argv=None):
     del args[args.index('-f={connection_file}')]
 
   return parse_args(args[3:])
+
+
+def check_spec(kernel_spec, spec):
+  """
+  Check if the deprecated "command" argument is present,
+  represents the first version of remote_kernel definition
+  If so, update to new-style kernel definition and re-save kernel spec
+  :param kernel_spec: File name where the kernel specification is stored
+  :param spec: JSON kernel specification to check and update if necessary
+  :return: Kernel specification, updated to new version if necessary.
+  """
+  global logger
+
+  args = spec['argv']
+  cmd = None
+  pre_args = None
+  post_args = None
+  if '--command' in args:
+    cmd_idx = args.index('--command')
+    cmd = args[cmd_idx + 1]
+    pre_args = args[:cmd_idx]
+    post_args = args[cmd_idx + 2:]
+  elif '-c' in args:
+    cmd_idx = args.index('-c')
+    cmd = args[cmd_idx + 1]
+    pre_args = args[:cmd_idx]
+    post_args = args[cmd_idx + 2:]
+  else:
+    for a_idx, a in enumerate(args):
+      if a.startswith('-c='):
+        cmd = a[3:]
+        pre_args = args[:a_idx]
+        post_args = args[a_idx + 1:]
+        break
+      elif a.startswith('--command='):
+        cmd = a[10:]
+        pre_args = args[:a_idx]
+        post_args = args[a_idx + 1:]
+        break
+
+  if cmd is not None:
+    cmds = cmd.split(' && ')
+    kernel_args = []
+    if len(cmds) > 1:
+      kernel_args += ['-pc', ' && '.join(cmds[:-1])]
+    if cmds[-1] != 'python -m ipykernel':
+      kernel_args += ['-k', cmds[-1]]
+
+    logger.warning('Deprecated version of kernel specification detected! Updating to new format...')
+    logger.debug('Normalizing command "%s" to %s', cmd, kernel_args)
+
+    spec['argv'] = pre_args + kernel_args + post_args
+
+    with open(kernel_spec, mode='w') as spec_fs:
+      json.dump(spec, spec_fs, indent=2)
+  return spec
 
 
 def parse_args(argv=None):
@@ -114,7 +173,7 @@ def start_kernel(ssh_host, connection_config, **kwargs):
 
     ssh_key = kwargs.get('ssh_key', None)
     jump_server = kwargs.get('jump_server', None)
-    command = kwargs.get('command', None)
+    command = kwargs.get('pre_command', None)
     kernel = kwargs.get('kernel', 'python -m ipykernel')
     no_remote_files = kwargs.get('no_remote_files', False)
 
@@ -130,7 +189,7 @@ def start_kernel(ssh_host, connection_config, **kwargs):
         else:
           config_str = json.dumps(connection_config, indent=2)
           ssh_client.exec_command("echo '%s' > remote_kernel.json" % config_str)
-          arguments = ' -f ~/remote_kernel.json'
+          arguments = '-f ~/remote_kernel.json'
 
         # Setup synchronization if enabled
         if kwargs.get('synchronize', False):

@@ -51,7 +51,7 @@ def get_parser(connection_file_arg=True):
                                                                                        "ipykernel on the remote server")
   ipykernel_group.add_argument('--kernel', '-k', default='python -m ipykernel',
                                help='Kernel start command, default is "ipykernel"')
-  ipykernel_group.add_argument('--command', '-c', default=None,
+  ipykernel_group.add_argument('--pre-command', '-pc', default=None,
                                help='Additional commands to execute on remote server, prior to '
                                     'starting the kernel (specified in `--kernel`)')
   ipykernel_group.add_argument('--name', '-n', default='remote_kernel-%(user)s@%(host)s',
