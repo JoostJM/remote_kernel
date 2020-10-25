@@ -16,7 +16,7 @@ def main(argv=None):
       return 1
 
     elif argv[0].startswith('-'):  # if first argument is not a script select: start kernel
-      from .start import parse_args
+      from remote_kernel.start import parse_args
       script = 'Start kernel'
       logger.debug('Starting Start script with args %s', argv)
       return parse_args(argv)
@@ -26,12 +26,12 @@ def main(argv=None):
       args, remainder = parser.parse_known_args(argv)
 
       if args.cmd == 'install':
-        from .install import parse_args
+        from remote_kernel.install import parse_args
         script = 'Install kernel'
         logger.debug('Starting Install script with args %s', remainder)
         return parse_args(remainder)
       elif args.cmd == 'from-spec':
-        from .start import get_spec
+        from remote_kernel.start import get_spec
         script = 'Start kernel from kernel_spec file'
         logger.debug('Starting kernel from spec file')
         return get_spec(remainder)
