@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 from setuptools import setup
+import versioneer
 
 with open('requirements.txt', 'r') as fp:
   requirements = list(filter(bool, (line.strip() for line in fp)))
@@ -11,7 +12,7 @@ setup(
   author='Joost van Griethuysen',
   author_email='joostjm@gmail.com',
 
-  version='0.1.dev',
+  version=versioneer.get_version(),
 
   packages=['remote_kernel'],
   package_data={'remote_kernel': ['resources/*.png']},
