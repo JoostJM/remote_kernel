@@ -89,7 +89,7 @@ def install_kernel(kernel_name, ssh_host, **kwargs):
 
           with synchronizer.connect(skip_check=True):
             synchronizer.check_remote_sync_folder()
-        except:
+        except Exception:
           logger.error('Error setting up synchronization on the remote server!', exc_info=True)
           return 1
 
@@ -155,6 +155,6 @@ def install_kernel(kernel_name, ssh_host, **kwargs):
 
       logger.info('Kernel specification installed in %s', kernel_dir)
       return 0
-  except:
+  except Exception:
     logger.error('Error installing kernel specs!', exc_info=True)
     return 2

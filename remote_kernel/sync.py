@@ -132,7 +132,7 @@ class ParamikoSync(object):
 
   def _sync_local_folder(self, folder='.'):
     self.logger.info('Synchronizing local folder %s to remote folder %s',
-                      self._unix_join(self.local_folder, folder), self.remote_folder)
+                     self._unix_join(self.local_folder, folder), self.remote_folder)
     folder_stack = [folder]
 
     while len(folder_stack) > 0:
@@ -170,7 +170,7 @@ class ParamikoSync(object):
 
   def _sync_remote_folder(self, folder='.'):
     self.logger.info('Synchronizing remote folder %s to local folder %s',
-                      self._unix_join(self.remote_folder, folder), self.local_folder)
+                     self._unix_join(self.remote_folder, folder), self.local_folder)
     folder_stack = [folder]
 
     while len(folder_stack) > 0:

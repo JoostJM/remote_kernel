@@ -199,7 +199,7 @@ def start_kernel(ssh_host, connection_config, **kwargs):
           try:
             with synchronizer.connect() as sync:
               sync.sync()
-          except:
+          except Exception:
             logger.error('Error synchronizing files!', exc_info=True)
         else:
           synchronizer = None
@@ -254,11 +254,11 @@ def start_kernel(ssh_host, connection_config, **kwargs):
           try:
             with synchronizer.connect() as sync:
               sync.sync()
-          except:
+          except Exception:
             logger.error('Error synchronizing files!', exc_info=True)
 
         return 0
-    except:
+    except Exception:
       logger.error('Main loop error', exc_info=True)
       return 1
     finally:

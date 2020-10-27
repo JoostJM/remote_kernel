@@ -36,7 +36,7 @@ def main(argv=None):
         logger.debug('Starting kernel from spec file')
         return get_spec(remainder)
       return 0
-  except Exception as e:
+  except Exception:
     logger.error('%s error', script, exc_info=True)
     return 1
 
