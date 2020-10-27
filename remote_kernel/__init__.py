@@ -93,3 +93,7 @@ CMD_ARGS = OrderedDict([
   ('--Session.key', '"b\'%(key)s\'"'),  # Py3 compat, ensure the key is interpreted as a byte string
   ('--transport', '"%(transport)s"')
 ])
+
+from ._version import get_versions  # noqa: I202
+__version__ = get_versions()['version']
+del get_versions
