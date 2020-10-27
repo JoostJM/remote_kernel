@@ -5,11 +5,11 @@ import os
 import threading
 import time
 
-import paramiko
 from jupyter_core.paths import jupyter_runtime_dir
 
-from . import CMD_ARGS
+from . import CMD_ARGS, get_parser
 from .ssh_client import ParamikoClient
+from .sync import ParamikoSync
 
 
 logger = logging.getLogger('remote_kernel.start')
@@ -72,6 +72,9 @@ def get_spec(argv=None):
   with open(kernel_spec, mode='r') as spec_fs:
     spec = json.load(spec_fs)
 
+  # Ensure specification is the correct version
+  spec = check_spec(kernel_spec, spec)
+
   args = spec['argv']
 
   assert args[1:3] == ['-m', 'remote_kernel'], \
@@ -87,22 +90,65 @@ def get_spec(argv=None):
   return parse_args(args[3:])
 
 
-def parse_args(argv=None):
+def check_spec(kernel_spec, spec):
+  """
+  Check if the deprecated "command" argument is present,
+  represents the first version of remote_kernel definition
+  If so, update to new-style kernel definition and re-save kernel spec
+  :param kernel_spec: File name where the kernel specification is stored
+  :param spec: JSON kernel specification to check and update if necessary
+  :return: Kernel specification, updated to new version if necessary.
+  """
   global logger
 
-  parser = argparse.ArgumentParser(fromfile_prefix_chars='@')
-  parser.add_argument('--target', '-t', metavar='[username@]host[:port]', required=True,
-                      help='Remote server to connect to. Formatted as [username@]host[:port]')
-  parser.add_argument('-J', dest='jump_server', metavar='[username@]host[:port]', default=[], action='append',
-                      help='Optional jump servers to connect through to the host')
-  parser.add_argument('-i', dest='ssh_key', default=None, help='ssh key to use for authentication')
-  parser.add_argument('--command', '-c', default='python -m ipykernel',
-                      help='Command to execute on the remote server (should start the kernel)')
-  parser.add_argument('--file', '-f', help='Connection file to configure the kernel')
-  parser.add_argument('--no-remote-files', action='store_true',
-                      help='If specified, no remote files are created/removed on the remote host.\n'
-                           'Connection arguments are passed via commandline.\n'
-                           'N.B. This is less secure, as these arguments are visible in the processes list!')
+  args = spec['argv']
+  cmd = None
+  pre_args = None
+  post_args = None
+  if '--command' in args:
+    cmd_idx = args.index('--command')
+    cmd = args[cmd_idx + 1]
+    pre_args = args[:cmd_idx]
+    post_args = args[cmd_idx + 2:]
+  elif '-c' in args:
+    cmd_idx = args.index('-c')
+    cmd = args[cmd_idx + 1]
+    pre_args = args[:cmd_idx]
+    post_args = args[cmd_idx + 2:]
+  else:
+    for a_idx, a in enumerate(args):
+      if a.startswith('-c='):
+        cmd = a[3:]
+        pre_args = args[:a_idx]
+        post_args = args[a_idx + 1:]
+        break
+      elif a.startswith('--command='):
+        cmd = a[10:]
+        pre_args = args[:a_idx]
+        post_args = args[a_idx + 1:]
+        break
+
+  if cmd is not None:
+    cmds = cmd.split(' && ')
+    kernel_args = []
+    if len(cmds) > 1:
+      kernel_args += ['-pc', ' && '.join(cmds[:-1])]
+    if cmds[-1] != 'python -m ipykernel':
+      kernel_args += ['-k', cmds[-1]]
+
+    logger.warning('Deprecated version of kernel specification detected! Updating to new format...')
+    logger.debug('Normalizing command "%s" to %s', cmd, kernel_args)
+
+    spec['argv'] = pre_args + kernel_args + post_args
+
+    with open(kernel_spec, mode='w') as spec_fs:
+      json.dump(spec, spec_fs, indent=2)
+  return spec
+
+
+def parse_args(argv=None):
+  global logger
+  parser = get_parser()
 
   logger.debug('parsing arguments')
   args = parser.parse_args(argv)
@@ -127,86 +173,94 @@ def start_kernel(ssh_host, connection_config, **kwargs):
 
     ssh_key = kwargs.get('ssh_key', None)
     jump_server = kwargs.get('jump_server', None)
-    command = kwargs.get('command', 'python -m ipykernel')
+    command = kwargs.get('pre_command', None)
+    kernel = kwargs.get('kernel', 'python -m ipykernel')
     no_remote_files = kwargs.get('no_remote_files', False)
 
     fwd_ports = [('localhost', connection_config[port]) for port in connection_config if port.endswith('_port')]
 
-    clients = []
-    tunnel = None
     kernel_fname = None
     try:
-      # Connect via jump server(s) if specified
-      if jump_server is not None:
-        for srvr in jump_server:
-          client = ParamikoClient()
-          client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-          client.connect_override(srvr, ssh_key, clients[-1] if len(clients) > 0 else None)
-          clients.append(client)
-      ssh_client = ParamikoClient()
-      ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-      ssh_client.connect_override(ssh_host, ssh_key, clients[-1] if len(clients) > 0 else None)
-      clients.append(ssh_client)
+      with ParamikoClient().connect_override(ssh_host, ssh_key, jump_server) as ssh_client:
+        tunnel = ssh_client.create_forwarding_tunnel(fwd_ports, fwd_ports.copy())
 
-      tunnel = ssh_client.create_forwarding_tunnel(fwd_ports, fwd_ports.copy())
+        if no_remote_files:
+          arguments = ' '.join(['%s=%s' % (key, value) for key, value in CMD_ARGS.items()]) % connection_config
+        else:
+          config_str = json.dumps(connection_config, indent=2)
+          ssh_client.exec_command("echo '%s' > remote_kernel.json" % config_str)
+          arguments = '-f ~/remote_kernel.json'
 
-      if no_remote_files:
-        arguments = ' '.join(['%s=%s' % (key, value) for key, value in CMD_ARGS.items()]) % connection_config
-      else:
-        config_str = json.dumps(connection_config, indent=2)
-        ssh_client.exec_command("echo '%s' > remote_kernel.json" % config_str)
-        arguments = ' -f ~/remote_kernel.json'
+        # Setup synchronization if enabled
+        if kwargs.get('synchronize', False):
+          synchronizer = ParamikoSync(ssh_client, **{k: v for k, v in kwargs.items() if k in
+                                                     ('local_folder=', 'remote_folder', 'recursive', 'bi_directional')})
+          synchronizer.set_subfolder(kwargs.get('kernel_name', 'N/A'))
+          try:
+            with synchronizer.connect() as sync:
+              sync.sync()
+          except:
+            logger.error('Error synchronizing files!', exc_info=True)
+        else:
+          synchronizer = None
 
-      ssh_cmd = '%s %s' % (command, arguments)
-      chan = ssh_client.get_transport().open_session()
-      chan.get_pty()
-      logger.debug('Excecuting cmd %s', ssh_cmd)
-      chan.exec_command(ssh_cmd)
+        # Start IPyKernel
+        ssh_cmd = '%s %s' % (kernel, arguments)
+        if synchronizer is not None:
+          logger.info("Changing dir to %s", synchronizer.remote_folder)
+          ssh_cmd = '%s && %s' % (synchronizer.get_chdir_cmd(), ssh_cmd)
+        if command is not None:
+          ssh_cmd = '%s && %s' % (command, ssh_cmd)
 
-      try:
-        time.sleep(0.5)  # Wait just a bit to allow the IPyKernel to start up
-        tunnel.start()
+        chan = ssh_client.get_transport().open_session()
+        chan.get_pty()
+        logger.debug('Excecuting cmd %s', ssh_cmd)
+        chan.exec_command(ssh_cmd)
 
-        kernel_fname = os.path.join(jupyter_runtime_dir(),
-                                    'kernel-%s@%s.json' % (ssh_client.username, ssh_client.host))
-        with open(kernel_fname, mode='w') as kernel_fs:
-          json.dump(connection_config, kernel_fs, indent=2)
+        try:
+          time.sleep(0.5)  # Wait just a bit to allow the IPyKernel to start up
+          tunnel.start()
 
-        logger.info('Remote Kernel started. To connect another client to this kernel, use:\n\t--existing %s' %
-                    os.path.basename(kernel_fname))
+          kernel_fname = os.path.join(jupyter_runtime_dir(),
+                                      'kernel-%s@%s.json' % (ssh_client.username, ssh_client.host))
+          with open(kernel_fname, mode='w') as kernel_fs:
+            json.dump(connection_config, kernel_fs, indent=2)
 
-        def writeall(sock):
-          while True:
-            data = sock.recv(4096)
-            if not data:
-              logger.info("\r\n*** SSH Channel Closed ***\r\n\r\n")
-              break
-            logger.info("REMOTE >>> " + data.decode('utf-8').replace('\n', '\nREMOTE >>> '))
+          logger.info('Remote Kernel started. To connect another client to this kernel, use:\n\t--existing %s' %
+                      os.path.basename(kernel_fname))
 
-        writer = threading.Thread(target=writeall, args=(chan,))
-        writer.setDaemon(True)
-        writer.start()
+          def writeall(sock):
+            while True:
+              data = sock.recv(4096)
+              if not data:
+                logger.info("\r\n*** SSH Channel Closed ***\r\n\r\n")
+                break
+              logger.info("REMOTE >>> " + data.decode('utf-8').replace('\n', '\nREMOTE >>> '))
 
-        while not chan.exit_status_ready():
-          time.sleep(1)
+          writer = threading.Thread(target=writeall, args=(chan,))
+          writer.setDaemon(True)
+          writer.start()
 
-      except (KeyboardInterrupt, SystemExit):
-        logger.info("Interrupting kernel...")
+          while not chan.exit_status_ready():
+            time.sleep(1)
 
-      if not no_remote_files:
-        ssh_client.exec_command('rm ~/remote_kernel.json')
+        except (KeyboardInterrupt, SystemExit):
+          logger.info("Interrupting kernel...")
 
-      return 0
-    except Exception as e:
+        if not no_remote_files:
+          ssh_client.exec_command('rm ~/remote_kernel.json')
+
+        if synchronizer is not None:
+          try:
+            with synchronizer.connect() as sync:
+              sync.sync()
+          except:
+            logger.error('Error synchronizing files!', exc_info=True)
+
+        return 0
+    except:
       logger.error('Main loop error', exc_info=True)
       return 1
     finally:
       if kernel_fname is not None and os.path.exists(kernel_fname):
         os.remove(kernel_fname)
-
-      # Clean up SSH connection
-      if tunnel is not None:
-        tunnel.close()
-      clients.reverse()
-      for client in clients:
-        client.close()

@@ -25,6 +25,15 @@ class ParamikoClient(paramiko.SSHClient):
     self.private_key = None
     self.load_host_keys(os.path.expanduser(hostkeys))
 
+    self._jump_host = None
+    self.tunnels = []
+
+  def __enter__(self):
+    return self
+
+  def __exit__(self, exc_type, exc_val, exc_tb):
+    self.close()
+
   def connect_override(self, host, pkey=None, jump_host=None, use_jump_pkey=True):
     """
     Alternative function to connect to SSH client. provides an override to paramiko.SSHClient.connect, with
@@ -32,11 +41,38 @@ class ParamikoClient(paramiko.SSHClient):
 
     :param host: SSH host to connect to. Expected format: [username@]host[:port]
     :param pkey: paramiko.RSAKey or string pointing to ssh key to use for authentication
-    :param jump_host: Optional instance of ParamikoClient connected to the jump server.
+    :param jump_host: Optional (list or tuple of) string (format same as `host`) or instance of ParamikoClient connected
+      to the jump server. When an item in the list is a ParmikoClient, all subsequent items are ignored.
     :param use_jump_pkey: If True and jump_host is not None, re-use the jump_host.private_key.
         If successful, pkey is ignored.
     :return: None
     """
+    if jump_host is not None:
+      # First check if jump host is a list/tuple or a single item
+      if isinstance(jump_host, (tuple, list)):
+        # Get the last item, as the first real connection is made at the bottom of this recursive function
+        if len(jump_host) > 0:
+          jump_client = jump_host[-1]
+          next_jump = jump_host[:-1]
+        else:
+          jump_client = None
+          next_jump = None
+      else:
+        jump_client = jump_host
+        next_jump = None
+
+      # set the jump_host, connect to it if the item is just the host address
+      if jump_client is None:
+        pass
+      elif isinstance(jump_client, ParamikoClient):
+        self._jump_host = jump_client
+      elif isinstance(jump_client, str):
+        self._jump_host = ParamikoClient().connect_override(jump_client, pkey, next_jump, use_jump_pkey)
+      else:
+        raise ValueError("Jump host items should either be ParamikoClient or string, found type %s" % type(jump_client))
+
+    self.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
     # Parse out the connection string
     host_match = self.host_pattern.fullmatch(host)
     if host_match is None:
@@ -56,8 +92,8 @@ class ParamikoClient(paramiko.SSHClient):
 
     # Set up the authentication variables
     pwd = None
-    if jump_host is not None and use_jump_pkey and jump_host.private_key is not None:
-      self.private_key = jump_host.private_key
+    if self._jump_host is not None and use_jump_pkey and self._jump_host.private_key is not None:
+      self.private_key = self._jump_host.private_key
     elif pkey is not None:
       if isinstance(pkey, paramiko.RSAKey):
         self.private_key = pkey
@@ -77,14 +113,27 @@ class ParamikoClient(paramiko.SSHClient):
                              title='Password').showDialog()
 
     jump_channel = None
-    if jump_host is not None:
-      assert isinstance(jump_host, ParamikoClient)
-      src_addr = (jump_host.host, jump_host.port)
+    if self._jump_host is not None:
+      src_addr = (self._jump_host.host, self._jump_host.port)
       dest_addr = (self.host, self.port)
-      jump_transport = jump_host.get_transport()
+      jump_transport = self._jump_host.get_transport()
       jump_channel = jump_transport.open_channel('direct-tcpip', dest_addr=dest_addr, src_addr=src_addr)
 
+      self._jump_host = self._jump_host
+
     self.connect(self.host, self.port, self.username, pwd, self.private_key, sock=jump_channel)
+    return self
+
+  def close(self):
+    # Clean up SSH connection
+    for tunnel in self.tunnels:
+      tunnel.close()
+    self.tunnels = None
+
+    super(ParamikoClient, self).close()
+    if self._jump_host is not None:
+      self._jump_host.close()
+      self._jump_host = None
 
   def create_forwarding_tunnel(self, local_bind_addresses, remote_bind_addresses):
     # Set up the tunnel. Though we pass the target host, port, user and dummy password, these are not used.
@@ -101,4 +150,5 @@ class ParamikoClient(paramiko.SSHClient):
                                 remote_bind_addresses=remote_bind_addresses,
                                 logger=ssh_logger)
     tunnel._transport = self.get_transport()
+    self.tunnels.append(tunnel)
     return tunnel
