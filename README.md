@@ -1,4 +1,5 @@
-# Remote Kernel
+# Remote Kernel v1.1
+
 Remote kernel is a pure-python package that sets up an ssh 
 connection with port forwarding to a remote host, and starts
 up an IPyKernel on that host. This allows a locally running 
@@ -11,7 +12,7 @@ local kernel!
 
 To install remote_kernel, run: 
 
-`pip install git+https://github.com/JoostJM/remote_kernel`
+`pip install remote-kernel`
 
 ## Usage
 
@@ -56,7 +57,7 @@ If successfull, this will print a message like this:
 
 ```
 remote_kernel.start I: Remote Kernel started. To connect another client to this kernel, use:
-	--existing kernel-<user>@<host>.json
+    --existing kernel-<user>@<host>.json
 ```
 
 Copy this name (or just the `<user>@<host` part) and use it
