@@ -6,6 +6,44 @@ import time
 from paramiko import SFTP
 
 
+def parse_args(argv=None):
+  """
+  Parse arguments ``argv`` to start a manual synchronization between local and remote host, using similar arguments to
+  starting a remote kernel with synchronization enabled. Argument ``-f`` (connection file) is not allowed.
+  Other kernel-specific arguments are ignored. This function does not start a kernel on the remote host.
+  Synchronization behaviour is identical to that of the automatic synchronization if added to the kernel definition.
+
+  :param argv: Arguments defining the connection to the remote host and synchronization settings.
+  :return: exit code for the process, 0 if successful, 1 otherwise.
+  """
+  from . import get_parser
+  from .ssh_client import ParamikoClient
+
+  logger = logging.getLogger('remote_kernel.manual_sync')
+  parser = get_parser(connection_file_arg=False)
+
+  logger.debug('parsing arguments')
+  args = parser.parse_args(argv)
+  arg_dict = args.__dict__.copy()
+
+  ssh_host = arg_dict['target']
+  ssh_key = arg_dict.get('ssh_key', None)
+  jump_server = arg_dict.get('jump_server', None)
+
+  with ParamikoClient().connect_override(ssh_host, ssh_key, jump_server) as ssh_client:
+    synchronizer = ParamikoSync(ssh_client, **{k: v for k, v in arg_dict.items() if k in
+                                               ('local_folder=', 'remote_folder', 'recursive', 'bi_directional')})
+    synchronizer.set_subfolder(arg_dict.get('kernel_name', 'N/A'))
+    try:
+      with synchronizer.connect() as sync:
+        sync.sync()
+    except:
+      logger.error('Error synchronizing files!', exc_info=True)
+      return 1
+
+  return 0
+
+
 class ParamikoSync(object):
   def __init__(self, ssh_client,
                local_folder='./remote_kernel_sync',
