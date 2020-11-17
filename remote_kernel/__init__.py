@@ -54,7 +54,7 @@ def get_parser(connection_file_arg=True):
   ipykernel_group.add_argument('--pre-command', '-pc', default=None,
                                help='Additional commands to execute on remote server, prior to '
                                     'starting the kernel (specified in `--kernel`)')
-  ipykernel_group.add_argument('--name', '-n', default='remote_kernel-%(user)s@%(host)s',
+  ipykernel_group.add_argument('--name', '-n', dest='kernel_name', default='remote_kernel-%(user)s@%(host)s',
                                help='Display name of the kernel to install\n'
                                     'Default: remote_kernel-<user>@<host>')
   if connection_file_arg:
