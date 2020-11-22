@@ -200,8 +200,9 @@ class ParamikoSync(object):
           if remote_file is not None:
             remote_mtime = remote_file.st_mtime
 
-          if entry_stat.st_mtime > remote_mtime:
+          if int(entry_stat.st_mtime) > int(remote_mtime):
             dest_file = self._unix_join(self.remote_folder, entry_path)
+            self.logger.debug('local mtime %s, remote mtime %s', int(entry_stat.st_mtime), int(remote_mtime))
             self.logger.info('Pushing file %s to the remote', entry_path)
             self.sftp_client.put(os.path.join(self.local_folder, entry_path), dest_file)
             self.sftp_client.utime(dest_file, (entry_stat.st_atime, entry_stat.st_mtime))
@@ -229,13 +230,14 @@ class ParamikoSync(object):
           if os.path.isfile(local_file):
             local_mtime = os.stat(local_file).st_mtime
 
-          if entry.st_mtime > local_mtime:
+          if int(entry.st_mtime) > int(local_mtime):
             # Ensure the destination directory exists
             dest_dir = os.path.join(self.local_folder, fldr)
             if not os.path.isdir(dest_dir):
               os.makedirs(dest_dir)
 
             # Get the file
+            self.logger.debug('local mtime %s, remote mtime %s', int(local_mtime), int(entry.st_mtime))
             self.logger.info('Getting file %s from the remote', entry_path)
             self.sftp_client.get(self._unix_join(self.remote_folder, entry_path), local_file)
 
