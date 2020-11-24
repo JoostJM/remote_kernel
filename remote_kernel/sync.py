@@ -37,7 +37,7 @@ def parse_args(argv=None):
     try:
       with synchronizer.connect() as sync:
         sync.sync()
-    except:
+    except Exception:
       logger.error('Error synchronizing files!', exc_info=True)
       return 1
 
