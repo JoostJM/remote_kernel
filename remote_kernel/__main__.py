@@ -22,7 +22,7 @@ def main(argv=None):
       return parse_args(argv)
     else:
       parser = argparse.ArgumentParser(add_help=False)
-      parser.add_argument('cmd', choices=['install', 'from-spec'])
+      parser.add_argument('cmd', choices=['install', 'from-spec', 'sync'])
       args, remainder = parser.parse_known_args(argv)
 
       if args.cmd == 'install':
@@ -31,10 +31,20 @@ def main(argv=None):
         logger.debug('Starting Install script with args %s', remainder)
         return parse_args(remainder)
       elif args.cmd == 'from-spec':
-        from remote_kernel.start import get_spec
+        from remote_kernel import get_spec
+        from remote_kernel.start import parse_args
         script = 'Start kernel from kernel_spec file'
         logger.debug('Starting kernel from spec file')
-        return get_spec(remainder)
+        kernel_args = get_spec(remainder)
+        return parse_args(kernel_args)
+      elif args.cmd == 'sync':
+        from remote_kernel.sync import parse_args
+        if remainder[0] == 'from-spec':
+          from remote_kernel import get_spec
+          kernel_args = get_spec(remainder[1:])
+        else:
+          kernel_args = remainder
+        return parse_args(kernel_args)
       return 0
   except Exception:
     logger.error('%s error', script, exc_info=True)

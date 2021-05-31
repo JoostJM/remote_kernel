@@ -26,7 +26,7 @@ def parse_args(argv=None):
   args = parser.parse_args(argv)
 
   arg_dict = args.__dict__.copy()
-  kernel_name = arg_dict.pop('name')
+  kernel_name = arg_dict.pop('kernel_name')
   ssh_host = arg_dict.pop('target')
 
   return install_kernel(kernel_name, ssh_host, **arg_dict)

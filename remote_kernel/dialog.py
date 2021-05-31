@@ -12,6 +12,7 @@ class PromptDialog(tkinter.Tk):
     self.frame = tkinter.Frame().pack()
     self.txt = tkinter.StringVar()
 
+    # Filter by prefix and remove prefixes for customization of child-elements
     label_kwargs = {k[7:]: kwargs[k] for k in kwargs if k.startswith('label__')}
     entry_kwargs = {k[7:]: kwargs[k] for k in kwargs if k.startswith('entry__')}
     button_kwargs = {k[8:]: kwargs[k] for k in kwargs if k.startswith('button__')}

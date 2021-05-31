@@ -6,6 +6,44 @@ import time
 from paramiko import SFTP
 
 
+def parse_args(argv=None):
+  """
+  Parse arguments ``argv`` to start a manual synchronization between local and remote host, using similar arguments to
+  starting a remote kernel with synchronization enabled. Argument ``-f`` (connection file) is not allowed.
+  Other kernel-specific arguments are ignored. This function does not start a kernel on the remote host.
+  Synchronization behaviour is identical to that of the automatic synchronization if added to the kernel definition.
+
+  :param argv: Arguments defining the connection to the remote host and synchronization settings.
+  :return: exit code for the process, 0 if successful, 1 otherwise.
+  """
+  from . import get_parser
+  from .ssh_client import ParamikoClient
+
+  logger = logging.getLogger('remote_kernel.manual_sync')
+  parser = get_parser(connection_file_arg=False)
+
+  logger.debug('parsing arguments')
+  args = parser.parse_args(argv)
+  arg_dict = args.__dict__.copy()
+
+  ssh_host = arg_dict['target']
+  ssh_key = arg_dict.get('ssh_key', None)
+  jump_server = arg_dict.get('jump_server', None)
+
+  with ParamikoClient().connect_override(ssh_host, ssh_key, jump_server) as ssh_client:
+    synchronizer = ParamikoSync(ssh_client, **{k: v for k, v in arg_dict.items() if k in
+                                               ('local_folder=', 'remote_folder', 'recursive', 'bi_directional')})
+    synchronizer.set_subfolder(arg_dict.get('kernel_name', 'N/A'))
+    try:
+      with synchronizer.connect() as sync:
+        sync.sync()
+    except Exception:
+      logger.error('Error synchronizing files!', exc_info=True)
+      return 1
+
+  return 0
+
+
 class ParamikoSync(object):
   def __init__(self, ssh_client,
                local_folder='./remote_kernel_sync',
@@ -162,8 +200,9 @@ class ParamikoSync(object):
           if remote_file is not None:
             remote_mtime = remote_file.st_mtime
 
-          if entry_stat.st_mtime > remote_mtime:
+          if int(entry_stat.st_mtime) > int(remote_mtime):
             dest_file = self._unix_join(self.remote_folder, entry_path)
+            self.logger.debug('local mtime %s, remote mtime %s', int(entry_stat.st_mtime), int(remote_mtime))
             self.logger.info('Pushing file %s to the remote', entry_path)
             self.sftp_client.put(os.path.join(self.local_folder, entry_path), dest_file)
             self.sftp_client.utime(dest_file, (entry_stat.st_atime, entry_stat.st_mtime))
@@ -191,13 +230,14 @@ class ParamikoSync(object):
           if os.path.isfile(local_file):
             local_mtime = os.stat(local_file).st_mtime
 
-          if entry.st_mtime > local_mtime:
+          if int(entry.st_mtime) > int(local_mtime):
             # Ensure the destination directory exists
             dest_dir = os.path.join(self.local_folder, fldr)
             if not os.path.isdir(dest_dir):
               os.makedirs(dest_dir)
 
             # Get the file
+            self.logger.debug('local mtime %s, remote mtime %s', int(local_mtime), int(entry.st_mtime))
             self.logger.info('Getting file %s from the remote', entry_path)
             self.sftp_client.get(self._unix_join(self.remote_folder, entry_path), local_file)
 

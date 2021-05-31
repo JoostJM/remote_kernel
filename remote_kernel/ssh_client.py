@@ -80,7 +80,7 @@ class ParamikoClient(paramiko.SSHClient):
     host_dict = host_match.groupdict()
     self.host = host_dict['host']
     if host_dict['port'] is not None:
-      self.port = int(self.port)
+      self.port = int(host_dict['port'])
     self.username = host_dict['user']
 
     if self.username is None:
