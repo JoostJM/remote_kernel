@@ -120,7 +120,7 @@ def install_kernel(kernel_name, ssh_host, **kwargs):
       if ssh_key is not None:
         kernel_args += ['-i', ssh_key]
       if pre_command is not None:
-        kernel_args += ['-c', pre_command]
+        kernel_args += ['-pc', pre_command]
       if kernel_cmd != 'python -m ipykernel':
         kernel_args += ['-k', kernel_cmd]
       if no_remote_files:
