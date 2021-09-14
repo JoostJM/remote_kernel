@@ -38,7 +38,7 @@ def install_kernel(kernel_name, ssh_host, **kwargs):
   ssh_key = kwargs.get('ssh_key', None)
   jump_server = kwargs.get('jump_server', None)
 
-  pre_command = kwargs.get('command', None)
+  pre_command = kwargs.get('pre_command', None)
   kernel_cmd = kwargs.get('kernel', 'python -m ipykernel')
   dry_run = kwargs.get('dry_run', False)
   skip_kernel_test = kwargs.get('skip_kernel_test', False)
@@ -58,7 +58,7 @@ def install_kernel(kernel_name, ssh_host, **kwargs):
 
       cmd = ' && '.join(cmds)
 
-      logger.debug('Running cmd %s', cmd)
+      logger.info('Running cmd %s', cmd)
       chan.exec_command(cmd)
       result = chan.recv_exit_status()
 
